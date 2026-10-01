@@ -1,0 +1,7 @@
+{
+  "area_min": 900,
+  "area_max": 3500,
+  "circularity_min": 0.55,
+  "otsu_return_value": 100.0,
+  "selected_count": 12
+}
