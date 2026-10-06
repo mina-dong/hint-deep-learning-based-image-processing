@@ -1,0 +1,10 @@
+{
+  "cnnlab\\builder.py": "983e79e8f6fd603f23b4098b2290c7053e559526431321cc63b33c85fcf69e24",
+  "cnnlab\\common.py": "0678f5acb284b1f1d889b4e316389cb0b3a6005a49f5cb943b4a6a0cffc242cd",
+  "cnnlab\\data.py": "6f3a3144b5963680af01fd374d26bcd7e48dbe9dbc82f03a9586aaed18036e28",
+  "cnnlab\\engine.py": "2e7f701a9acd69a04557440bb1e0e7c061003d549da9766a47557ee302a5685a",
+  "cnnlab\\models.py": "5148a91260bea8c8eeb6641ee2a2b9e56279ce7696459cdbeb0d9dd0e61a62ee",
+  "cnnlab\\reporting.py": "18edee0f8c1f55d05ac292a2eea3703eb90347eb4b94e6fb0e79becd29921676",
+  "cnnlab\\runner.py": "1ccc78f2e31646f5b573175a9123da5f7c17c86eb70512b8e96ebd124ca7e21e",
+  "cnnlab\\__init__.py": "1e0959cefd39ca2f5c6394a5e7fcb911c69895dcf9a379527b9a87efc0cc1a38"
+}
