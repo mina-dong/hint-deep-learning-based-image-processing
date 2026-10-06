@@ -1,0 +1,688 @@
+--- R1/00_build_data_bundle.py
++++ R2/00_build_data_bundle.py
+@@ -1,4 +1,4 @@
+-"""TEACHER ONLY: acquire real sources once, create 2000 samples per domain.
++"""TEACHER ONLY: acquire real sources once, create MNIST 2000 / CIFAR-10 10000 / Oxford cats-dogs 2000.
+ This is NOT an already data-included package. ALLOW_DOWNLOAD=True explicitly
+ allows source download on this computer. Set False when using local originals.
+ After success, run 08_make_student_zip.py; students then skip this script.
+--- R1/08_make_student_zip.py
++++ R2/08_make_student_zip.py
+@@ -1,4 +1,4 @@
+-"""TEACHER ONLY: create a WITH_DATA ZIP only after all 6000 real samples pass checks."""
++"""TEACHER ONLY: create a WITH_DATA ZIP only after all 14000 real samples pass checks."""
+ from cnnlab.builder import make_student_zip
+ if __name__ == "__main__":
+     make_student_zip()
+--- R1/cnnlab/builder.py
++++ R2/cnnlab/builder.py
+@@ -4,15 +4,32 @@
+ """
+ from __future__ import annotations
+ import gzip, hashlib, io, json, os, pickle, struct, tarfile, time, urllib.request, zipfile
+-from pathlib import Path
++from pathlib import Path, PurePosixPath
++from datetime import datetime
++import re, shutil, uuid
+ import numpy as np
+ from PIL import Image, ImageOps
+ from .common import ROOT, read_json, write_json, sha_file, project_lock
+-from .data import CLASSES, SHAPES, save_bundle, load_bundle
++from .data import CLASSES, SHAPES, DATASET_SIZES, save_bundle, load_bundle, validate_arrays
+ 
+ MNIST_URL = "https://storage.googleapis.com/tensorflow/tf-keras-datasets/mnist.npz"
+ CIFAR_URL = "https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz"
+-CATS_URL = "https://storage.googleapis.com/mledu-datasets/cats_and_dogs_filtered.zip"
++OXFORD_HOME = "https://www.robots.ox.ac.uk/~vgg/data/pets/"
++OXFORD_DATASET = "Oxford-IIIT Pet"
++# Official download-page host first; torchvision 0.25's official URLs second.
++OXFORD_RESOURCES = {
++    "images.tar.gz": {
++        "urls": ["https://thor.robots.ox.ac.uk/datasets/pets/images.tar.gz",
++                 "https://www.robots.ox.ac.uk/~vgg/data/pets/data/images.tar.gz"],
++        "md5": "5c4f3ee8e5d25df40f4fd59a7f44e54c", "limit_mb": 850,
++    },
++    "annotations.tar.gz": {
++        "urls": ["https://thor.robots.ox.ac.uk/datasets/pets/annotations.tar.gz",
++                 "https://www.robots.ox.ac.uk/~vgg/data/pets/data/annotations.tar.gz"],
++        "md5": "95a8c909bbe2e81eed6a22bccdf3f68f", "limit_mb": 50,
++    },
++}
++CIFAR_PREFIX_CACHE = "cifar_prefix_source_10000.npz"
+ USER_AGENT = "NGV-CNN-Teaching/1.0"
+ 
+ 
+@@ -137,10 +154,11 @@
+ 
+ 
+ class LimitedReader:
+-    def __init__(self, stream, limit=24*1024**2):
++    def __init__(self, stream, limit=64*1024**2):
+         self.stream,self.limit,self.count,self.next_report=stream,limit,0,2*1024**2
+     def read(self,n=-1):
+-        if self.count>=self.limit:raise IOError("CIFAR prefix exceeded 24 MiB compressed transfer limit")
++        if self.count>=self.limit:
++            raise IOError(f"CIFAR prefix exceeded {self.limit/1024**2:g} MiB compressed transfer limit")
+         n=min(n if n>=0 else 256*1024,self.limit-self.count)
+         b=self.stream.read(n);self.count+=len(b)
+         if self.count>=self.next_report:
+@@ -149,36 +167,71 @@
+         return b
+ 
+ 
+-def cifar_prefix(source_dir):
+-    cache=source_dir/"cifar_prefix_source.npz"
++def cifar_prefix(source_dir, per_class=1000, allow_download=True):
++    """Keep exactly 1000/class, stopping the stream when enough unique samples exist.
++    A training batch is not exactly balanced: reading one 10000-image batch is
++    not sufficient. Read small blocks across training batches; ignore test_batch.
++    Network read-ahead/candidate images can exceed the retained 10000 samples.
++    """
++    source_dir=Path(source_dir)
++    source_dir.mkdir(parents=True,exist_ok=True)
++    cache=source_dir/CIFAR_PREFIX_CACHE
+     if cache.is_file():
+-        with np.load(cache,allow_pickle=False) as z:return z["images"],z["labels"],z["ids"]
+-    print("[DOWNLOAD] Limited prefix of the official CIFAR binary archive; not the full 162 MB file.",flush=True)
++        with np.load(cache,allow_pickle=False) as z:
++            cached=(z["images"],z["labels"],z["ids"])
++        validate_arrays(*cached,"cifar10",expected=10*per_class)
++        return cached
++    if not allow_download:
++        raise FileNotFoundError("No 10000-image CIFAR source cache. Supply an original CIFAR archive or enable ALLOW_DOWNLOAD. "
++                                "The old 5000-record cifar_prefix_source.npz cannot supply 10000 distinct images.")
++    print("[DOWNLOAD] CIFAR training prefix: retain 10000 images (1000/class); at most 64 MiB compressed bytes read.",flush=True)
+     req=urllib.request.Request(CIFAR_URL,headers={"User-Agent":USER_AGENT})
++    xs,ys,ids=[],[],[]
+     try:
+         with urllib.request.urlopen(req,timeout=30) as response:
+             limited=LimitedReader(response)
+             with tarfile.open(fileobj=limited,mode="r|gz") as tar:
+                 for m in tar:
+-                    name=Path(m.name).name
+-                    if m.isfile() and name.startswith("data_batch_") and name.endswith(".bin"):
+-                        with tar.extractfile(m) as f:
+-                            b=f.read(5000*3073)
+-                        if len(b)%3073:raise ValueError("Incomplete prefix record")
+-                        arr=np.frombuffer(b,dtype=np.uint8).reshape(-1,3073)
+-                        y=arr[:,0].copy();x=arr[:,1:].reshape(-1,3,32,32).transpose(0,2,3,1).copy()
+-                        ids=np.asarray([f"{name}:{i}" for i in range(len(y))])
+-                        with cache.with_suffix(".tmp").open("wb") as f:
+-                            np.savez_compressed(f,images=x,labels=y,ids=ids)
+-                        cache.with_suffix(".tmp").replace(cache)
+-                        return x,y,ids
++                    name=PurePosixPath(m.name).name
++                    if not m.isfile() or not re.fullmatch(r"data_batch_[1-5]\.bin",name):
++                        continue
++                    if m.size % 3073:
++                        raise ValueError("Incomplete CIFAR binary batch")
++                    offset=0
++                    with tar.extractfile(m) as f:
++                        while True:
++                            block=f.read(500*3073)
++                            if not block:break
++                            if len(block)%3073:raise ValueError("Incomplete CIFAR prefix record")
++                            arr=np.frombuffer(block,dtype=np.uint8).reshape(-1,3073)
++                            y=arr[:,0].copy()
++                            if np.any(y>9):raise ValueError("Invalid CIFAR class label")
++                            x=arr[:,1:].reshape(-1,3,32,32).transpose(0,2,3,1).copy()
++                            xs.append(x);ys.append(y)
++                            ids.extend(f"{name}:{offset+i}" for i in range(len(y)))
++                            offset+=len(y)
++                            all_y=np.concatenate(ys)
++                            if np.min(np.bincount(all_y,minlength=10)) < per_class:
++                                continue
++                            try:
++                                selected=balanced_unique(np.concatenate(xs),all_y,np.asarray(ids),"cifar10",per_class)
++                            except ValueError:
++                                # Duplicate pixels can require a few extra candidate records.
++                                continue
++                            with cache.with_suffix(".tmp").open("wb") as out:
++                                np.savez_compressed(out,images=selected[0],labels=selected[1],ids=selected[2])
++                            cache.with_suffix(".tmp").replace(cache)
++                            print(f"[PREFIX READY] kept={len(selected[1])}; candidate records read={len(all_y)}; "
++                                  f"compressed bytes read={limited.count/1024**2:.1f} MiB",flush=True)
++                            return selected
+     except Exception as exc:
+-        raise RuntimeError("CIFAR prefix download failed. Place a complete original CIFAR binary or Python archive "
+-                           "in teacher_sources and rerun. No fallback full download is started automatically.") from exc
+-    raise ValueError("No expected training batch in CIFAR stream")
++        raise RuntimeError(f"CIFAR prefix download failed: {exc}. Place a complete original CIFAR binary or Python archive "
++                           "in teacher_sources and rerun. No full-download fallback starts automatically.") from exc
++    raise ValueError("Not enough unique images per class in CIFAR training stream")
+ 
+ 
+ def read_cats_zip(path, per_class=1000, seed=20260929):
++    """Legacy local parser only; the R2 builder never calls this or downloads its old source."""
+     rng=np.random.default_rng(seed)
+     xs,ys,ids=[],[],[]
+     seen=set()
+@@ -205,6 +258,142 @@
+     return np.asarray(xs)[order],np.asarray(ys)[order],np.asarray(ids)[order]
+ 
+ 
++
++def read_oxford_annotations(path):
++    """Species comes from column 3 of annotations/trainval.txt: 1=cat, 2=dog.
++    Use the official trainval partition only; this lab makes its own 80/20 split.
++    No breed-name capitalization heuristic and no 37-breed target substitution.
++    """
++    path=Path(path)
++    if path.is_dir():
++        candidate=path/"trainval.txt"
++        if not candidate.is_file():candidate=path/"annotations"/"trainval.txt"
++        text=candidate.read_text(encoding="utf-8")
++    else:
++        text=None
++        with tarfile.open(path,"r:gz") as tar:
++            for m in tar:
++                if m.isfile() and PurePosixPath(m.name).as_posix().lstrip("./")=="annotations/trainval.txt":
++                    if m.size>2*1024**2:raise ValueError("Unexpectedly large Oxford annotation list")
++                    with tar.extractfile(m) as f:text=f.read().decode("utf-8")
++                    break
++        if text is None:raise ValueError("Oxford archive has no annotations/trainval.txt")
++    labels={}
++    for line in text.splitlines():
++        if not line.strip() or line.lstrip().startswith("#"):continue
++        parts=line.split()
++        if len(parts)!=4 or not re.fullmatch(r"[A-Za-z0-9_]+",parts[0]):
++            raise ValueError(f"Invalid Oxford annotation row: {line!r}")
++        image_id,breed,species,breed_within_species=parts
++        if int(species) not in (1,2):raise ValueError("Oxford species label must be 1 (cat) or 2 (dog)")
++        if image_id in labels:raise ValueError("Duplicate Oxford annotation image ID")
++        labels[image_id]=int(species)-1
++    if not labels:raise ValueError("Oxford trainval annotation list is empty")
++    return labels
++
++
++def read_oxford_pet(images_path, annotations_path, per_class=1000, seed=20260929):
++    """Read once without tar extraction. Local archives or extracted folders work.
++    Preserve the R1 preprocessing: RGB + central fit to 96x96, bilinear.
++    """
++    labels=read_oxford_annotations(annotations_path)
++    xs,ys,ids=[],[],[]
++    def add(image_id, handle):
++        try:
++            with Image.open(handle) as im:
++                a=np.asarray(ImageOps.fit(im.convert("RGB"),(96,96),method=Image.Resampling.BILINEAR),dtype=np.uint8)
++        except (OSError,ValueError):
++            print(f"[SKIP unreadable Oxford image] {image_id}",flush=True)
++            return
++        xs.append(a.copy());ys.append(labels[image_id]);ids.append(f"oxford_trainval:{image_id}")
++    images_path=Path(images_path)
++    if images_path.is_dir():
++        image_dir=images_path/"images" if (images_path/"images").is_dir() else images_path
++        for image_id in sorted(labels):
++            p=image_dir/f"{image_id}.jpg"
++            if p.is_file() and p.stat().st_size<=20*1024**2:
++                with p.open("rb") as f:add(image_id,f)
++    else:
++        with tarfile.open(images_path,"r|gz") as tar:
++            seen_names=set()
++            for m in tar:
++                parts=PurePosixPath(m.name).parts
++                if not m.isfile() or m.size>20*1024**2 or len(parts)!=2 or parts[0]!="images":continue
++                p=PurePosixPath(m.name)
++                if p.suffix.lower()!=".jpg" or p.stem not in labels:continue
++                if p.stem in seen_names:raise ValueError("Duplicate Oxford image archive member")
++                seen_names.add(p.stem)
++                with tar.extractfile(m) as f:add(p.stem,f)
++    if not xs:raise ValueError("No readable Oxford images matching trainval annotations")
++    # Identical selection for archive and extracted-folder input.
++    order=np.argsort(np.asarray(ids))
++    return balanced_unique(np.asarray(xs)[order],np.asarray(ys)[order],np.asarray(ids)[order],
++                           "catsdogs",per_class,seed)
++
++
++def _verify_oxford_archive(path, resource):
++    if Path(path).is_dir():return
++    expected=OXFORD_RESOURCES[resource]["md5"]
++    with Path(path).open("rb") as f:
++        actual=hashlib.file_digest(f,"md5").hexdigest()
++    if actual!=expected:
++        raise ValueError(f"Oxford {resource} MD5 mismatch: {path}. Keep only a complete official archive, "
++                         "or supply verified extracted images/annotations folders.")
++
++
++def prepare_oxford_sources(dirs, sources, allow_download):
++    """Download the two Oxford official archives once. Approximately 800 MB total,
++    NOT a 2000-image-sized network download. Existing completed sources are reused.
++    """
++    resolved={}
++    for resource in ("annotations.tar.gz","images.tar.gz"):
++        folder=resource.split(".")[0]
++        candidates=[d/n for d in dirs for n in (resource,f"oxford-iiit-pet/{resource}",folder,f"oxford-iiit-pet/{folder}")]
++        found=next((p for p in candidates if p.is_file() or p.is_dir()),None)
++        if found is None:
++            if not allow_download:
++                raise FileNotFoundError(f"Oxford source missing: {resource}. Place images.tar.gz and annotations.tar.gz "
++                                        "in teacher_sources (or set SOURCE_DIR), or enable ALLOW_DOWNLOAD.")
++            errors=[]
++            info=OXFORD_RESOURCES[resource]
++            for url in info["urls"]:
++                try:
++                    found=download(url,sources/resource,limit_mb=info["limit_mb"])
++                    _verify_oxford_archive(found,resource)
++                    break
++                except Exception as exc:
++                    errors.append(str(exc));found=None
++                    if (sources/resource).is_file():
++                        # Do not silently accept or delete a completed but mismatched file.
++                        raise
++            if found is None:raise RuntimeError("Oxford download failed. Use local official archives.\n"+"\n".join(errors))
++        _verify_oxford_archive(found,resource)
++        resolved[folder]=found
++    return resolved["images"],resolved["annotations"]
++
++
++def _publish_bundle(data,domain,x,y,ids,source,backup_root):
++    """Verify new files before replacing old pairs; keep previous data outside
++    the student package. Unchanged MNIST is never regenerated or moved.
++    """
++    staging=backup_root/(".staging_"+domain+"_"+uuid.uuid4().hex[:8])
++    staging.mkdir(parents=True,exist_ok=False)
++    try:
++        save_bundle(staging,domain,x,y,ids,source)
++        load_bundle(staging,domain)
++        old=[data/f"{domain}.{ext}" for ext in ("npz","json") if (data/f"{domain}.{ext}").exists()]
++        if old:
++            backup=backup_root/(datetime.now().strftime("%Y%m%d_%H%M%S")+"_"+domain+"_"+uuid.uuid4().hex[:6])
++            backup.mkdir(parents=True,exist_ok=False)
++            for p in old:shutil.move(str(p),str(backup/p.name))
++            print(f"[BACKUP] Previous {domain} pair: {backup}",flush=True)
++        data.mkdir(parents=True,exist_ok=True)
++        for ext in ("npz","json"):
++            (staging/f"{domain}.{ext}").replace(data/f"{domain}.{ext}")
++    finally:
++        shutil.rmtree(staging,ignore_errors=True)
++
++
+ def find_source(dirs,names):
+     for d in dirs:
+         for n in names:
+@@ -222,10 +411,18 @@
+     with project_lock(root/"results"):
+         for domain in ["mnist","cifar10","catsdogs"]:
+             if (data/f"{domain}.npz").exists():
+-                load_bundle(data,domain)
+-                print(f"[ALREADY VERIFIED] {domain}",flush=True)
+-                continue
+-            print(f"\n[PREPARE] {domain}: exactly 2000 distinct real examples",flush=True)
++                old_meta=read_json(data/f"{domain}.json")
++                old_n=int(old_meta["n"])
++                # Validate the old pair before deciding whether it needs migration.
++                load_bundle(data,domain,expected=old_n)
++                current=(old_n==DATASET_SIZES[domain] and
++                         (domain!="catsdogs" or old_meta.get("source",{}).get("dataset")==OXFORD_DATASET))
++                if current:
++                    print(f"[ALREADY VERIFIED] {domain}",flush=True)
++                    continue
++                if domain=="mnist":raise ValueError("Unexpected MNIST count; restore the R1 2000-image pair.")
++                print(f"[UPDATE REQUIRED] {domain}: rebuilding requested count/source. Old files are retained until the new pair passes checks.",flush=True)
++            print(f"\n[PREPARE] {domain}: exactly {DATASET_SIZES[domain]} distinct real examples",flush=True)
+             if domain=="mnist":
+                 p=find_source(dirs,["mnist.npz"])
+                 images_path=find_source(dirs,["MNIST/raw/train-images-idx3-ubyte","MNIST/raw/train-images-idx3-ubyte.gz",
+@@ -248,36 +445,49 @@
+                     x,y,ids=read_cifar_archive(p)
+                     source={"url":"https://www.cs.toronto.edu/~kriz/cifar.html","source_file":p.name,
+                             "source_sha256":sha_file(p),"sampling":"balanced random unique subset of available official training batches"}
+-                elif (sources/"cifar_prefix_source.npz").is_file() or allow_download:
+-                    x,y,ids=cifar_prefix(sources)
+-                    source={"url":CIFAR_URL,"source_file":"cifar_prefix_source.npz",
+-                        "source_sha256":sha_file(sources/"cifar_prefix_source.npz"),
+-                        "sampling":"balanced random unique subset from first 5000 records of first encountered training batch; NOT random across the entire official training corpus"}
++                elif (sources/CIFAR_PREFIX_CACHE).is_file() or allow_download:
++                    x,y,ids=cifar_prefix(sources,allow_download=allow_download)
++                    source={"url":CIFAR_URL,"source_file":CIFAR_PREFIX_CACHE,
++                        "source_sha256":sha_file(sources/CIFAR_PREFIX_CACHE),
++                        "sampling":"1000 unique images/class selected from a prefix across official training batches; stopped after enough candidates; NOT random across the entire official training corpus"}
+                 else:
+                     raise FileNotFoundError("CIFAR source missing. Add original CIFAR archive or explicitly enable ALLOW_DOWNLOAD.")
+-                x,y,ids=balanced_unique(x,y,ids,domain,200)
++                x,y,ids=balanced_unique(x,y,ids,domain,1000)
+             else:
+-                p=find_source(dirs,["cats_and_dogs_filtered.zip","cats_and_dogs.zip"])
+-                if p is None:
+-                    if not allow_download:raise FileNotFoundError("Cats/dogs source missing. Add cats_and_dogs_filtered.zip or enable ALLOW_DOWNLOAD.")
+-                    p=download(CATS_URL,sources/"cats_and_dogs_filtered.zip",limit_mb=100)
+-                x,y,ids=read_cats_zip(p)
+-                source={"url":CATS_URL,"source_file":p.name,"source_sha256":sha_file(p),
+-                    "sampling":"1000 unique images/class from original train+validation; original folder roles discarded and a new fixed 80/20 split created",
+-                    "preprocessing":"RGB, central aspect-preserving fit to 96x96 using PIL bilinear"}
+-            save_bundle(data,domain,x,y,ids,source)
+-            load_bundle(data,domain)
+-            print(f"[OK] {domain}: images={len(y)}, classes={np.bincount(y).tolist()}, train pool=1600, fixed test=400",flush=True)
+-        (data/"README.txt").write_text("Three verified 2000-image datasets are present. See each JSON source manifest and fixed split.\n",encoding="utf-8")
+-        write_json(root/"BUNDLE_STATUS.json",{"data_included":True,"datasets":list(CLASSES),"images_per_dataset":2000,
++                image_source,annotation_source=prepare_oxford_sources(dirs,sources,allow_download)
++                x,y,ids=read_oxford_pet(image_source,annotation_source)
++                source={"dataset":OXFORD_DATASET,"url":OXFORD_HOME,
++                    "source_file":str(image_source),"annotation_source":str(annotation_source),
++                    "source_sha256":sha_file(image_source) if image_source.is_file() else None,
++                    "annotation_sha256":sha_file(annotation_source) if annotation_source.is_file() else None,
++                    "official_split":"trainval", "label_mapping":{"1":"cat (0)","2":"dog (1)"},
++                    "sampling":"1000 unique images/species from Oxford trainval; a new fixed 80/20 internal split is created",
++                    "preprocessing":"RGB, central aspect-preserving fit to 96x96 using PIL bilinear",
++                    "license":"CC BY-SA 4.0", "license_url":"https://creativecommons.org/licenses/by-sa/4.0/",
++                    "attribution":"Oxford-IIIT Pet: O. M. Parkhi, A. Vedaldi, A. Zisserman, C. V. Jawahar, Cats and Dogs, CVPR 2012. Copyright remains with original image owners.",
++                    "changes":"2000-image subset, species labels, RGB 96x96 center-fit/bilinear, NPZ repackaging, new internal split"}
++            _publish_bundle(data,domain,x,y,ids,source,root/"teacher_sources"/"bundle_backups")
++            _,_,_,meta=load_bundle(data,domain)
++            print(f"[OK] {domain}: images={len(y)}, classes={np.bincount(y).tolist()}, "
++                  f"train pool={len(meta['split']['train_pool'])}, fixed test={len(meta['split']['test'])}",flush=True)
++        (data/"README.txt").write_text(
++            "Verified bundles: MNIST 2000, CIFAR-10 10000, Oxford-IIIT Pet cat/dog 2000. See each JSON for source, checksums and fixed split.\n"
++            "Oxford-IIIT Pet attribution: O. M. Parkhi, A. Vedaldi, A. Zisserman, C. V. Jawahar. Cats and Dogs, CVPR 2012.\n"
++            "Source: https://www.robots.ox.ac.uk/~vgg/data/pets/ ; license: CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/ .\n"
++            "Pet-image changes: 2000-image subset, species labels, RGB 96x96 bilinear center-fit, NPZ packaging, new 80/20 split.\n"
++            "Copyright remains with original image owners. Keep this notice and each JSON with redistributed pet images.\n",encoding="utf-8")
++        write_json(root/"BUNDLE_STATUS.json",{"data_included":True,"datasets":list(CLASSES),"images_per_dataset":DATASET_SIZES,
+                     "network_required_for_training":False})
+     print("\nAll real datasets verified. Run 08_make_student_zip.py to create a data-included classroom ZIP.",flush=True)
+ 
+ 
+ def make_student_zip(root=ROOT):
+     root=Path(root)
+-    for domain in CLASSES:load_bundle(root/"data",domain)
+-    status={"data_included":True,"datasets":list(CLASSES),"images_per_dataset":2000,"network_required_for_training":False}
++    for domain in CLASSES:
++        _,_,_,meta=load_bundle(root/"data",domain)
++        if domain=="catsdogs" and meta.get("source",{}).get("dataset")!=OXFORD_DATASET:
++            raise ValueError("R2 student ZIP requires Oxford-IIIT Pet catsdogs. Run 00_build_data_bundle.py to update the old source.")
++    status={"data_included":True,"datasets":list(CLASSES),"images_per_dataset":DATASET_SIZES,"network_required_for_training":False}
+     write_json(root/"BUNDLE_STATUS.json",status)
+     out=root/"distribution"
+     out.mkdir(exist_ok=True)
+--- R1/cnnlab/data.py
++++ R2/cnnlab/data.py
+@@ -14,10 +14,12 @@
+     "catsdogs": ["cat", "dog"],
+ }
+ SHAPES = {"mnist": (28, 28, 1), "cifar10": (32, 32, 3), "catsdogs": (96, 96, 3)}
++DATASET_SIZES = {"mnist": 2000, "cifar10": 10000, "catsdogs": 2000}
+ SPLIT_SEED = 20260929
+ 
+ 
+-def validate_arrays(images, labels, ids, domain: str, expected: int = 2000) -> None:
++def validate_arrays(images, labels, ids, domain: str, expected: int | None = None) -> None:
++    expected = DATASET_SIZES[domain] if expected is None else expected
+     if images.dtype != np.uint8 or images.shape != (expected, *SHAPES[domain]):
+         raise ValueError(f"{domain}: require uint8 {(expected, *SHAPES[domain])}, got {images.dtype} {images.shape}")
+     if labels.shape != (expected,) or labels.dtype.kind not in "iu":
+@@ -29,7 +31,7 @@
+         raise ValueError("Duplicate/missing source IDs")
+     hashes = [hashlib.sha256(x.tobytes()).hexdigest() for x in images]
+     if len(set(hashes)) != expected:
+-        raise ValueError("Exact duplicate image pixels detected; do not duplicate examples to reach 2000")
++        raise ValueError("Exact duplicate image pixels detected; do not duplicate examples to reach the required count")
+ 
+ 
+ def make_split(labels, ids, seed: int = SPLIT_SEED) -> dict:
+@@ -53,12 +55,12 @@
+     meta = {"domain": domain, "n": len(labels), "class_names": CLASSES[domain],
+             "image_shape": list(images.shape[1:]), "npz_sha256": sha_file(p),
+             "source": source, "split": make_split(labels, ids),
+-            "protocol": "2000-sample educational subset; 1600 development / 400 internal holdout; "
++            "protocol": f"{len(labels)}-sample educational subset; {int(.8 * len(labels))} development / {len(labels)-int(.8 * len(labels))} internal holdout; "
+                         "five-fold stratified CV only within development; not an official benchmark test score"}
+     write_json(out / f"{domain}.json", meta)
+ 
+ 
+-def load_bundle(root: Path, domain: str, expected: int = 2000):
++def load_bundle(root: Path, domain: str, expected: int | None = None):
+     p, m = root / f"{domain}.npz", root / f"{domain}.json"
+     if not p.is_file() or not m.is_file():
+         raise FileNotFoundError(f"Missing real dataset: {p}. This code does NOT download during training. "
+@@ -85,7 +87,7 @@
+     pool = np.asarray(pool, dtype=np.int64)
+     classes = np.unique(labels[pool])
+     if count > len(pool) or count < 5 * len(classes) or count % len(classes):
+-        raise ValueError("Training-pool size must be <=1600, >=5 per class, and a multiple of class count")
++        raise ValueError(f"Training-pool size must be <={len(pool)}, >=5 per class, and a multiple of class count")
+     rng = np.random.default_rng(seed)
+     # Same per-class permutations for every size -> 200 is contained in 400, etc.
+     chosen = [rng.permutation(pool[labels[pool] == c])[:count // len(classes)] for c in classes]
+--- R1/cnnlab/reporting.py
++++ R2/cnnlab/reporting.py
+@@ -99,7 +99,7 @@
+     write_csv(out/"per_class.csv", [{"class":n, **cr[n]} for n in names])
+     write_csv(out/"test_predictions.csv", [{"sample_index":i,"true":int(test_y[i]),"pred":int(test_pred[i]),
+                                          **{f"p_{n}":float(test_p[i,j]) for j,n in enumerate(names)}} for i in range(len(test_y))])
+-    body = "<p class='note'>2000장 중 1600장 내부에서 5-fold CV. 고정 시험 400장은 최종 재학습 뒤에만 평가합니다. " \
++    body = f"<p class='note'>선택된 학습 풀 {metrics['n_train_pool']}장 내부에서 5-fold CV. 고정 시험 {metrics['n_test']}장은 최종 재학습 뒤에만 평가합니다. " \
+            "공식 전체 test benchmark가 아닌 교육용 내부 holdout입니다. Test를 반복 비교하며 추가 튜닝하면 독립 최종평가로 볼 수 없습니다.</p>"
+     body += "<h2>실행 결과</h2>" + table([metrics])
+     body += "<h2>5-fold 결과</h2>" + table(fold_rows)
+@@ -122,7 +122,7 @@
+             "cv_accuracy_std","selected_epochs","test_loss","test_accuracy","test_macro_f1",
+             "cv_total_seconds","refit_train_seconds","test_seconds","test_ms_per_image","parameters"]
+     write_csv(out/"comparison.csv", rows)
+-    body = "<p class='note'>같은 도메인의 고정 test_hash와 시험 이미지 400장을 유지합니다. " \
++    body = f"<p class='note'>같은 도메인의 고정 test_hash와 시험 이미지 {rows[0]['n_test'] if rows else '-'}장을 유지합니다. " \
+            "모든 조건은 사전학습 없이 새 가중치로 시작합니다. 시간은 같은 장치에서 순차 실행한 값으로 비교하세요.</p>"
+     body += table(rows,keys)
+     for metric in ["test_accuracy","test_loss","cv_accuracy_mean","cv_loss_mean","refit_train_seconds","cv_total_seconds","test_seconds"]:
+--- R1/cnnlab/runner.py
++++ R2/cnnlab/runner.py
+@@ -96,7 +96,7 @@
+         "batch_size":cfg["batch_size"],"dropout":cfg["dropout"],"weight_decay":cfg["weight_decay"],
+         "max_cv_epochs":cfg["epochs"],"augmentation":cfg["augmentation"],
+         "dataset_sha256":meta["npz_sha256"],"train_pool_hash":ids_hash(ids[pool]),"test_hash":meta["split"]["test_hash"],
+-        "evaluation_protocol":"internal_holdout400_after_5fold_cv_and_refit","pretrained":False}
++        "evaluation_protocol":f"internal_holdout{len(test_idx)}_after_5fold_cv_and_refit","pretrained":False}
+     np.savez_compressed(out/"predictions.npz",test_indices=test_idx,test_y=test_y,test_probabilities=test_p,
+                         oof_indices=pool,oof_y=y[pool],oof_probabilities=oof[pool])
+     variant_report(out,cfg,result,fold_rows,histories,final_history,x[test_idx],test_y,test_p,y[pool],oof[pool],CLASSES[cfg["domain"]])
+--- R1/configs/exp01_cifar10.json
++++ R2/configs/exp01_cifar10.json
+@@ -13,7 +13,7 @@
+     "seed": 42,
+     "cv_seed": 137,
+     "subset_seed": 421,
+-    "train_count": 1600,
++    "train_count": 8000,
+     "cpu_threads": 4
+   },
+   "variants": [
+--- R1/configs/exp03_models.json
++++ R2/configs/exp03_models.json
+@@ -13,7 +13,7 @@
+     "seed": 42,
+     "cv_seed": 137,
+     "subset_seed": 421,
+-    "train_count": 1600,
++    "train_count": 8000,
+     "cpu_threads": 4
+   },
+   "variants": [
+--- R1/tests/test_r2_data_sources.py
++++ R2/tests/test_r2_data_sources.py
+@@ -0,0 +1,187 @@
++"""R2-only regression tests. ALL image arrays are synthetic test fixtures.
++Nothing generated here is part of the student data bundle or evidence of accuracy.
++"""
++import hashlib, io, json, tarfile, tempfile, unittest
++from pathlib import Path
++from unittest.mock import patch
++import numpy as np
++from PIL import Image
++from cnnlab import builder
++from cnnlab.common import ROOT, read_json, sha_file, write_json
++from cnnlab.data import DATASET_SIZES, CLASSES, save_bundle, load_bundle, make_split, folds_for, nested_subset
++
++
++def fixture(n, shape, classes):
++    rng=np.random.default_rng(982)
++    return rng.integers(0,256,(n,*shape),dtype=np.uint8),np.arange(n,dtype=np.int64)%classes,np.asarray([f'SYNTHETIC_R2_{i}' for i in range(n)])
++
++
++def tar_bytes(members):
++    b=io.BytesIO()
++    with tarfile.open(fileobj=b,mode='w:gz') as t:
++        for name,payload in members:
++            item=tarfile.TarInfo(name);item.size=len(payload);t.addfile(item,io.BytesIO(payload))
++    return b.getvalue()
++
++
++def oxford_fixture(root):
++    members=[];lines=[];ids_to_species={}
++    # Deliberately reverse the real dataset's capitalization convention: only annotation labels are authoritative.
++    for c,base in [(0,'lowercase_cat'),(1,'Uppercase_Dog')]:
++        for i in range(5):
++            image_id=f'{base}_{i}';ids_to_species[image_id]=c
++            x=np.random.default_rng(10*c+i).integers(0,256,(40,60,3),dtype=np.uint8)
++            b=io.BytesIO();Image.fromarray(x).save(b,format='JPEG')
++            members.append((f'images/{image_id}.jpg',b.getvalue()))
++            lines.append(f'{image_id} {c+1} {c+1} {c+1}')
++    # This image is NOT in trainval and must not be selected.
++    members.append(('images/excluded_official_test_1.jpg',members[0][1]))
++    image=root/'images.tar.gz';annotation=root/'annotations.tar.gz'
++    image.write_bytes(tar_bytes(members))
++    text=('\n'.join(lines)+'\n').encode()
++    annotation.write_bytes(tar_bytes([('annotations/trainval.txt',text)]))
++    return image,annotation,members,text,ids_to_species
++
++
++class TestR2Counts(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):cls.x,cls.y,cls.ids=fixture(10000,(32,32,3),10)
++    def test_01_target_counts(self):
++        self.assertEqual(DATASET_SIZES,{'mnist':2000,'cifar10':10000,'catsdogs':2000})
++    def test_02_cifar_fixed_80_20(self):
++        s=make_split(self.y,self.ids)
++        self.assertEqual((len(s['train_pool']),len(s['test'])),(8000,2000))
++        self.assertFalse(set(s['train_pool'])&set(s['test']))
++        self.assertTrue(np.all(np.bincount(self.y[s['test']])==200))
++    def test_03_cifar_folds(self):
++        s=make_split(self.y,self.ids);seen=[]
++        pairs=folds_for(np.asarray(s['train_pool']),self.y,137)
++        for a,b in pairs:
++            self.assertEqual((len(a),len(b)),(6400,1600))
++            self.assertFalse(set(a)&set(b));self.assertFalse((set(a)|set(b))&set(s['test']))
++            seen.extend(b.tolist())
++        self.assertEqual(len(set(seen)),8000)
++    def test_04_cifar_loader_roundtrip_and_old_rejection(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);save_bundle(p,'cifar10',self.x,self.y,self.ids,{'kind':'SYNTHETIC_TEST_ONLY'})
++            x,y,ids,m=load_bundle(p,'cifar10')
++            self.assertEqual(m['n'],10000);self.assertIn('8000 development / 2000',m['protocol'])
++            self.assertTrue(np.array_equal(x,self.x))
++            with self.assertRaises(ValueError):load_bundle(p,'cifar10',expected=2000)
++    def test_05_cifar_configs_change_only_count(self):
++        for name in ['exp01_cifar10.json','exp03_models.json']:
++            c=read_json(ROOT/'configs'/name)['base']
++            self.assertEqual(c['train_count'],8000)
++            self.assertEqual((c['epochs'],c['batch_size'],c['learning_rate']),(5,32,0.001))
++    def test_06_subset_accepts_8000(self):
++        s=make_split(self.y,self.ids)
++        a=nested_subset(s['train_pool'],self.y,8000)
++        self.assertEqual(len(a),8000)
++
++
++class TestOxfordParser(unittest.TestCase):
++    def test_07_species_from_annotations(self):
++        with tempfile.TemporaryDirectory() as d:
++            image,ann,_,_,labels=oxford_fixture(Path(d))
++            x,y,ids=builder.read_oxford_pet(image,ann,per_class=3)
++            self.assertEqual(x.shape,(6,96,96,3));self.assertEqual(np.bincount(y).tolist(),[3,3])
++            for label,id_ in zip(y,ids):self.assertEqual(label,labels[id_.split(':',1)[1]])
++            self.assertTrue(all('excluded_official_test' not in id_ for id_ in ids))
++    def test_08_archive_directory_same_selection(self):
++        with tempfile.TemporaryDirectory() as d:
++            root=Path(d);image,ann,members,text,_=oxford_fixture(root)
++            (root/'annotations').mkdir();(root/'annotations/trainval.txt').write_bytes(text)
++            (root/'images').mkdir()
++            for name,b in members:(root/name).write_bytes(b)
++            a=builder.read_oxford_pet(image,ann,per_class=3)
++            b=builder.read_oxford_pet(root/'images',root/'annotations',per_class=3)
++            for x,y in zip(a,b):self.assertTrue(np.array_equal(x,y))
++    def test_09_insufficient_unique_rejected(self):
++        with tempfile.TemporaryDirectory() as d:
++            image,ann,*_=oxford_fixture(Path(d))
++            with self.assertRaises(ValueError):builder.read_oxford_pet(image,ann,per_class=6)
++    def test_10_bad_species_rejected(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);(p/'trainval.txt').write_text('pet_1 1 3 1\n')
++            with self.assertRaises(ValueError):builder.read_oxford_annotations(p)
++    def test_11_duplicate_ids_rejected(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);(p/'trainval.txt').write_text('pet_1 1 1 1\npet_1 1 1 1\n')
++            with self.assertRaises(ValueError):builder.read_oxford_annotations(p)
++    def test_12_source_missing_no_network(self):
++        with tempfile.TemporaryDirectory() as d,patch('urllib.request.urlopen',side_effect=AssertionError('network forbidden')):
++            with self.assertRaises(FileNotFoundError):builder.prepare_oxford_sources([Path(d)],Path(d),False)
++    def test_13_official_archive_checksum_rejected(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d)/'images.tar.gz';p.write_bytes(b'invalid')
++            with self.assertRaisesRegex(ValueError,'MD5 mismatch'):builder._verify_oxford_archive(p,'images.tar.gz')
++    def test_14_local_sources_with_mocked_fixture_checksums(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);image,ann,*_=oxford_fixture(p)
++            resources={k:{**v,'md5':hashlib.md5((p/k).read_bytes()).hexdigest()} for k,v in builder.OXFORD_RESOURCES.items()}
++            with patch.dict(builder.OXFORD_RESOURCES,resources),patch('urllib.request.urlopen',side_effect=AssertionError('network forbidden')):
++                a,b=builder.prepare_oxford_sources([p],p,False)
++                self.assertEqual((a,b),(image,ann))
++    def test_15_download_fallback_mocked(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);image,ann,*_=oxford_fixture(p)
++            payload={r:(p/r).read_bytes() for r in builder.OXFORD_RESOURCES}
++            for r in payload:(p/r).unlink()
++            def fake_download(url,dest,limit_mb):
++                if 'thor.' in url:raise OSError('fixture primary host unavailable')
++                dest.write_bytes(payload[dest.name]);return dest
++            resources={k:{**v,'md5':hashlib.md5(payload[k]).hexdigest()} for k,v in builder.OXFORD_RESOURCES.items()}
++            with patch.dict(builder.OXFORD_RESOURCES,resources),patch.object(builder,'download',side_effect=fake_download) as mock:
++                a,b=builder.prepare_oxford_sources([p],p,True)
++                self.assertEqual(mock.call_count,4)
++                self.assertEqual((a,b),(image,ann))
++
++
++class TestCifarPrefixAndMigration(unittest.TestCase):
++    def test_16_prefix_across_batches_no_official_test(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);x,_,_=fixture(30,(32,32,3),10)
++            labels=np.asarray([0]+list(range(1,10))*2+[0]+list(range(10)))
++            def payload(a,b):
++                return np.column_stack([labels[a:b].astype(np.uint8),x[a:b].transpose(0,3,1,2).reshape(b-a,-1)]).tobytes()
++            raw=tar_bytes([('cifar-10-batches-bin/test_batch.bin',payload(0,10)),
++                           ('cifar-10-batches-bin/data_batch_1.bin',payload(0,19)),
++                           ('cifar-10-batches-bin/data_batch_2.bin',payload(19,30))])
++            with patch('urllib.request.urlopen',return_value=io.BytesIO(raw)):
++                a,b,ids=builder.cifar_prefix(p,per_class=2)
++            self.assertEqual(len(b),20);self.assertTrue(np.all(np.bincount(b)==2))
++            self.assertTrue(any('data_batch_2.bin' in i for i in ids))
++            self.assertTrue(all('test_batch' not in i for i in ids))
++            with patch('urllib.request.urlopen',side_effect=AssertionError('network forbidden')):
++                aa,bb,ii=builder.cifar_prefix(p,per_class=2,allow_download=False)
++            self.assertTrue(np.array_equal(a,aa));self.assertTrue(np.array_equal(b,bb));self.assertTrue(np.array_equal(ids,ii))
++    def test_17_old_prefix_not_mistaken_for_new(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);(p/'cifar_prefix_source.npz').write_bytes(b'old-small-cache')
++            with patch('urllib.request.urlopen',side_effect=AssertionError('network forbidden')):
++                with self.assertRaises(FileNotFoundError):builder.cifar_prefix(p,allow_download=False)
++            self.assertEqual((p/'cifar_prefix_source.npz').read_bytes(),b'old-small-cache')
++    def test_18_publish_failure_preserves_old_pair(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);data=p/'data';data.mkdir()
++            (data/'cifar10.npz').write_bytes(b'oldnpz');(data/'cifar10.json').write_bytes(b'oldjson')
++            with patch.object(builder,'save_bundle',side_effect=ValueError('fixture rejection')):
++                with self.assertRaises(ValueError):builder._publish_bundle(data,'cifar10',None,None,None,{},p/'backup')
++            self.assertEqual((data/'cifar10.npz').read_bytes(),b'oldnpz')
++            self.assertEqual((data/'cifar10.json').read_bytes(),b'oldjson')
++    def test_19_published_pair_backs_up_old(self):
++        with tempfile.TemporaryDirectory() as d:
++            p=Path(d);data=p/'data';data.mkdir()
++            (data/'mnist.npz').write_bytes(b'oldnpz');(data/'mnist.json').write_bytes(b'oldjson')
++            x,y,ids=fixture(2000,(28,28,1),10)
++            builder._publish_bundle(data,'mnist',x,y,ids,{'kind':'SYNTHETIC_TEST_ONLY'},p/'backup')
++            self.assertEqual(len(load_bundle(data,'mnist')[1]),2000)
++            old=list((p/'backup').glob('*/mnist.npz'))
++            self.assertEqual(len(old),1);self.assertEqual(old[0].read_bytes(),b'oldnpz')
++    def test_20_protocol_text_dynamic(self):
++        source=(ROOT/'cnnlab/runner.py').read_text()
++        self.assertNotIn('internal_holdout400_after',source)
++        report=(ROOT/'cnnlab/reporting.py').read_text()
++        self.assertNotIn('시험 이미지 400장',report)
++
++if __name__=='__main__':unittest.main()

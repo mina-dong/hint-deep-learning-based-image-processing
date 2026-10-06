@@ -1,0 +1,70 @@
+{
+  "release": "R2_OXFORD_CIFAR10000_20260929",
+  "unit_functional_tests": {
+    "passed": 55,
+    "failed": 0,
+    "original_test_core_unchanged": true,
+    "additional_r2_tests": 20
+  },
+  "integration": {
+    "fixture": "SYNTHETIC_ONLY_NOT_DISTRIBUTED",
+    "passed": true,
+    "checks": [
+      "R1 CIFAR 2000 to 10000 migration",
+      "old catsdogs source replacement",
+      "previous pairs retained in backups",
+      "MNIST npz+json byte preservation",
+      "rerun with zero network/source reads",
+      "two domain plans: 5 folds + one final fit each",
+      "CIFAR 2000 holdout and catsdogs 400 holdout",
+      "dynamic protocol and report counts",
+      "CSV/HTML collection",
+      "student ZIP required data included, originals/backups/results excluded"
+    ],
+    "default_training_budgets_tested": false,
+    "windows_gpu_tested": false
+  },
+  "environment": {
+    "os": "Linux",
+    "torch": "2.10.0+cpu",
+    "torchvision": "0.25.0+cpu",
+    "numpy": "2.3.5",
+    "scikit-learn": "1.8.0",
+    "matplotlib": "3.10.8",
+    "Pillow": "12.3.0"
+  },
+  "not_validated": [
+    "real remote archive downloads (DNS failed)",
+    "accuracy on actual datasets",
+    "default complete training budgets",
+    "Windows execution",
+    "GPU/CUDA execution"
+  ],
+  "network_tests": "Official pages/schema/checksums verified on web; archive parser and retry fallback tests use synthetic local archives/mocked responses. Runtime HEAD calls to Oxford and CIFAR failed DNS.",
+  "real_images_in_code_zip": 0,
+  "preserved_files_sha256": {
+    "install.ps1": "da22bcdfce649722263b6c2a155c2b7025642ee9c4f0c2dc5455309521dc5c9b",
+    "requirements.txt": "6c4dbe4142661b6c13352b1212816a8982e77d08f1523ff2169155c90ca7b591",
+    "00_check_environment.py": "d40f44565f0ce42e70a2f5afd43eb44b3e6ca5a57ce0e5735ca9af059060933c",
+    "00_check_data.py": "2ff94253434db41efc841e47053e202584ef7fda6c73841aa56813845cce23b4",
+    ".vscode/settings.json": "8209f8860fd73557f194c98c56f2d40d0b30e39071f6eb1213e4b0738e14bcd7",
+    ".vscode/launch.json": "80fe7296407d2edf6f9c21bce363b0ca94a2ad1fcb40aab8bb115bde28519c20",
+    ".vscode/extensions.json": "ebca698bf437aea0700935a9ff0a6fd4e43d224416d9babed67178ae449f75c2",
+    "cnnlab/models.py": "5148a91260bea8c8eeb6641ee2a2b9e56279ce7696459cdbeb0d9dd0e61a62ee",
+    "cnnlab/engine.py": "2e7f701a9acd69a04557440bb1e0e7c061003d549da9766a47557ee302a5685a",
+    "cnnlab/common.py": "0678f5acb284b1f1d889b4e316389cb0b3a6005a49f5cb943b4a6a0cffc242cd",
+    "01_mnist.py": "f1de241cfbf35a7aae723cd2f4a159a6e2d7c4136d92f0ce854a4edcb1c571fa",
+    "02_cifar10.py": "1da7eb50120583596087b39f55e9bce1b822bb488b375c34643a8cc12b833b97",
+    "03_catsdogs.py": "5ca32e218b782e2ce8c2ffd42d17766d02e2ba5bd29c5789284f9f17cd4ba914",
+    "04_data_size.py": "20e5939005ae30670ff71694b114a6107bfa8b6ce792988d9540ede60a83334a",
+    "05_model_compare.py": "532a098b7e2a1f5eabee21846364a08bc56e1675516ca63637367e96e72c3087",
+    "06_hyperparameters.py": "74a86de5f8d92dd080843d566e036c214f87bbe1b723c05b64a35bdea581a811",
+    "07_collect_results.py": "12466eb0964e6f84cec8bee7e2afa99e43f2bba2380cb56651dc5dd326458939",
+    "09_run_checks.py": "1605fe53087547d9d5d8987e91050331a6932897880f4504f27914d4c9969e7f",
+    "configs/exp01_mnist.json": "bcf99ea8ddbabeba71d323d00bc7d36ccac9558d93413f05e13dce3027cc31e8",
+    "configs/exp01_catsdogs.json": "b7af6c341587689ea2c01e76b36fdaf1f400c29fd037812ee37da117f1a0d46a",
+    "configs/exp02_data_size.json": "d25d39e84ca884396ddfc3c43a062f4b395bcc2bf970833879f6206ade7078e0",
+    "configs/exp04_hyperparameters.json": "d53bc433696b6c14fea74cc6c88d9e21c37a6ede3cf441310100382d0b50db37",
+    "tests/test_core.py": "1663923668a080a88a9c12d1a16aa1a674f7f7ffd186cd6bfdd7d540d4f2e31a"
+  }
+}

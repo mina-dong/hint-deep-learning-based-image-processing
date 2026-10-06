@@ -1,0 +1,38 @@
+{
+  "title": "실습 2 | MNIST 데이터 양 비교",
+  "kind": "data_size",
+  "base": {
+    "domain": "mnist",
+    "model": "lenet_small",
+    "epochs": 5,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "dropout": 0.2,
+    "width": 16,
+    "augmentation": true,
+    "seed": 42,
+    "cv_seed": 137,
+    "subset_seed": 421,
+    "train_count": 1600,
+    "cpu_threads": 4
+  },
+  "variants": [
+    {
+      "name": "n0200",
+      "train_count": 200
+    },
+    {
+      "name": "n0400",
+      "train_count": 400
+    },
+    {
+      "name": "n0800",
+      "train_count": 800
+    },
+    {
+      "name": "n1600",
+      "train_count": 1600
+    }
+  ]
+}

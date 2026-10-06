@@ -1,0 +1,15 @@
+{
+  "data_included": false,
+  "reason": "External binary downloads failed in the authoring environment. No dataset images are bundled in this CODE_ONLY artifact.",
+  "required_datasets": [
+    "mnist",
+    "cifar10",
+    "catsdogs"
+  ],
+  "required_images_per_dataset": {
+    "mnist": 2000,
+    "cifar10": 10000,
+    "catsdogs": 2000
+  },
+  "catsdogs_source": "Oxford-IIIT Pet"
+}

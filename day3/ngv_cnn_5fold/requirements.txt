@@ -1,0 +1,6 @@
+# PyTorch/torchvision are installed separately by install.ps1.
+# These versions match the Linux CPU code-validation environment.
+numpy==2.3.5
+scikit-learn==1.8.0
+matplotlib==3.10.8
+Pillow==12.3.0

@@ -1,0 +1,24 @@
+{
+  "title": "실습 1-C | 고양이 vs 개 단일 CNN",
+  "base": {
+    "domain": "catsdogs",
+    "model": "tiny_mobile",
+    "epochs": 8,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "dropout": 0.2,
+    "width": 24,
+    "augmentation": true,
+    "seed": 42,
+    "cv_seed": 137,
+    "subset_seed": 421,
+    "train_count": 800,
+    "cpu_threads": 4
+  },
+  "variants": [
+    {
+      "name": "catsdogs_tiny_mobile"
+    }
+  ]
+}

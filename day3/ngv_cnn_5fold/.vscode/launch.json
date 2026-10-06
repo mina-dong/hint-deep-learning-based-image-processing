@@ -1,0 +1,113 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "00_check_environment.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/00_check_environment.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "00_check_data.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/00_check_data.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "01_mnist.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/01_mnist.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "02_cifar10.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/02_cifar10.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "03_catsdogs.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/03_catsdogs.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "04_data_size.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/04_data_size.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "05_model_compare.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/05_model_compare.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "06_hyperparameters.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/06_hyperparameters.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "07_collect_results.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/07_collect_results.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "00_build_data_bundle.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/00_build_data_bundle.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "08_make_student_zip.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/08_make_student_zip.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "09_run_checks.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/09_run_checks.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ]
+}
