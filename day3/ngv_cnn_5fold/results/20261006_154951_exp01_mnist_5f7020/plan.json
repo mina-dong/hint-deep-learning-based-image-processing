@@ -3,7 +3,7 @@
   "base": {
     "domain": "mnist",
     "model": "lenet_small",
-    "epochs": 10, 
+    "epochs": 5,
     "batch_size": 32,
     "learning_rate": 0.001,
     "weight_decay": 0.0001,
