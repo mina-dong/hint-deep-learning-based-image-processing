@@ -1,0 +1,17 @@
+{
+  "domain": "mnist",
+  "model": "lenet_small",
+  "epochs": 5,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "dropout": 0.2,
+  "width": 16,
+  "augmentation": true,
+  "seed": 42,
+  "cv_seed": 137,
+  "subset_seed": 421,
+  "train_count": 400,
+  "cpu_threads": 4,
+  "name": "n0400"
+}
