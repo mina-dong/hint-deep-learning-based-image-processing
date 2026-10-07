@@ -1,0 +1,14 @@
+{
+  "python": "3.12.10",
+  "python_executable": "C:\\Users\\User\\Downloads\\Lecture_notes\\13. 딥러닝 기반 영상처리_1,2일차\\Pratice\\day3\\ngv_cnn_5fold\\.venv\\Scripts\\python.exe",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "torch": "2.10.0+cpu",
+  "torchvision": "0.25.0+cpu",
+  "numpy": "2.3.5",
+  "sklearn": "1.8.0",
+  "pillow": "12.3.0",
+  "matplotlib": "3.10.8",
+  "device": "cpu",
+  "device_name": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "cuda_runtime": null
+}

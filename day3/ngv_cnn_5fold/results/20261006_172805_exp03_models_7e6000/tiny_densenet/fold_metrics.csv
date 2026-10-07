@@ -1,0 +1,2 @@
+﻿fold,n_train,n_validation,best_epoch,validation_loss,validation_accuracy,validation_macro_f1,train_seconds,validation_seconds
+1,6400,1600,4,1.3365759027004243,0.50625,0.4879482923132287,152.69886050000787,11.982552699977532
